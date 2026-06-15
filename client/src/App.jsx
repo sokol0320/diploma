@@ -117,11 +117,12 @@ function App() {
           ) : (
             devices.map((device) => (
               <SmartWindow 
-                key={device?.guid||Math.random()} 
-                device={device} 
-                user={user} 
-                onLogout={handleLogout} 
-              />
+  key={device?.guid||Math.random()} 
+  device={device} 
+  user={user} 
+  onLogout={handleLogout} 
+  onDeviceUpdate={fetchDevices} 
+/>
             ))
           )}
         </div>

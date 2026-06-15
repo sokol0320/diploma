@@ -1,15 +1,17 @@
 require('dotenv').config();
 const express = require('express');
-const mysql = require('mysql2/promise'); // Використовуємо проміси для async/await
+const mysql = require('mysql2/promise');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
+const nodemailer = require('nodemailer');
 const { OAuth2Client } = require('google-auth-library');
+
 const client = new OAuth2Client('876673268691-scqmciamd7gcmec4jrg2v0hv2a0hkerj.apps.googleusercontent.com');
 const app = express();
+
 app.use(cors());
 app.use(express.json());
 
-// --- Налаштування пулу підключень до Aurora ---
 const db = mysql.createPool({
     host: process.env.DB_HOST,
     user: process.env.DB_USER,
@@ -20,11 +22,16 @@ const db = mysql.createPool({
     queueLimit: 0
 });
 
-// ==========================
-// БЛОК 1: КОРИСТУВАЧІ (USERS)
-// ==========================
+const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS
+    }
+});
 
-// 1. РЕЄСТРАЦІЯ
+const resetCodes = new Map();
+
 app.post('/register', async (req, res) => {
     const { name, email, password } = req.body;
 
@@ -33,7 +40,6 @@ app.post('/register', async (req, res) => {
     }
 
     try {
-        // Перевірка чи існує користувач
         const [existing] = await db.execute('SELECT id FROM users WHERE email = ? OR name = ?', [email, name]);
         if (existing.length > 0) {
             return res.status(400).json({ message: 'Користувач з таким email або ім\'ям вже існує' });
@@ -41,7 +47,6 @@ app.post('/register', async (req, res) => {
 
         const hashedPassword = await bcrypt.hash(password, 10);
         
-        // Вставка в БД
         await db.execute(
             'INSERT INTO users (name, email, password) VALUES (?, ?, ?)',
             [name, email, hashedPassword]
@@ -53,7 +58,6 @@ app.post('/register', async (req, res) => {
     }
 });
 
-// 2. ВХІД (LOGIN)
 app.post('/login', async (req, res) => {
     const { email, password } = req.body;
 
@@ -73,13 +77,13 @@ app.post('/login', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
+
 app.post('/google-login', async (req, res) => {
     const { token } = req.body;
 
     try {
         const ticket = await client.verifyIdToken({
             idToken: token,
-            // ПЕРЕДАЕМ МАССИВ ИЗ ВСЕХ ТВОИХ CLIENT ID
             audience: [
                 '876673268691-scqmciamd7gcmec4jrg2v0hv2a0hkerj.apps.googleusercontent.com', 
                 'ТВОЙ_ANDROID_CLIENT_ID.apps.googleusercontent.com',                        
@@ -88,11 +92,9 @@ app.post('/google-login', async (req, res) => {
         });
         const { name, email, picture } = ticket.getPayload();
 
-        // 1. Перевіряємо, чи є такий користувач у вашій Aurora RDS
         const [rows] = await db.execute('SELECT * FROM users WHERE email = ?', [email]);
         let user = rows[0];
 
-        // 2. Якщо користувача немає — створюємо його
         if (!user) {
             const [result] = await db.execute(
                 'INSERT INTO users (name, email, password) VALUES (?, ?, ?)',
@@ -103,15 +105,63 @@ app.post('/google-login', async (req, res) => {
 
         res.json({ message: 'Вхід через Google успішний', user });
     } catch (error) {
-        console.error("Помилка перевірки токена:", error);
         res.status(400).json({ message: 'Невалідний Google токен' });
     }
 });
-// ==========================
-// БЛОК 2: ПРИСТРОЇ (DEVICES)
-// ==========================
 
-// 3. ДОДАТИ ПРИСТРІЙ
+app.post('/forgot-password', async (req, res) => {
+    const { email } = req.body;
+
+    try {
+        const [rows] = await db.execute('SELECT * FROM users WHERE email = ?', [email]);
+        if (rows.length === 0) {
+            return res.status(404).json({ message: 'Користувача з таким email не знайдено' });
+        }
+
+        const code = Math.floor(100000 + Math.random() * 900000).toString();
+        resetCodes.set(email, { code, expires: Date.now() + 15 * 60 * 1000 });
+
+        const mailOptions = {
+            from: process.env.EMAIL_USER,
+            to: email,
+            subject: 'Код відновлення пароля SmartWindow',
+            text: `Ваш код для відновлення пароля: ${code}\nКод дійсний 15 хвилин.`
+        };
+
+        await transporter.sendMail(mailOptions);
+        res.json({ message: 'Код підтвердження відправлено на вашу пошту' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/reset-password', async (req, res) => {
+    const { email, code, newPassword } = req.body;
+    
+    const record = resetCodes.get(email);
+    
+    if (!record) {
+        return res.status(400).json({ message: 'Код не запитувався або термін дії минув' });
+    }
+    if (record.code !== code) {
+        return res.status(400).json({ message: 'Невірний код' });
+    }
+    if (Date.now() > record.expires) {
+        resetCodes.delete(email);
+        return res.status(400).json({ message: 'Термін дії коду минув' });
+    }
+
+    try {
+        const hashedPassword = await bcrypt.hash(newPassword, 10);
+        await db.execute('UPDATE users SET password = ? WHERE email = ?', [hashedPassword, email]);
+        resetCodes.delete(email);
+        
+        res.json({ message: 'Пароль успішно змінено' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 app.post('/add-device', async (req, res) => {
     const { guid, ownerId, deviceName, side, ...otherData } = req.body;
     if (!guid || !ownerId) {
@@ -119,12 +169,10 @@ app.post('/add-device', async (req, res) => {
     }
 
     try {
-        // otherData зберігаємо як JSON (Aurora MySQL підтримує тип JSON)
         await db.execute(
             'INSERT INTO devices (guid, ownerId, deviceName, side, metadata) VALUES (?, ?, ?, ?, ?)',
             [guid, ownerId, deviceName || 'Unknown Device', side, JSON.stringify(otherData)]
         );
-        console.log(guid, ownerId, deviceName, side, JSON.stringify(otherData))
 
         res.status(201).json({ message: 'Пристрій збережено' });
     } catch (err) {
@@ -135,11 +183,32 @@ app.post('/add-device', async (req, res) => {
     }
 });
 
-// 4. ПОШУК ПРИСТРОЇВ ПО OWNER ID
 app.get('/devices/:ownerId', async (req, res) => {
     try {
         const [rows] = await db.execute('SELECT * FROM devices WHERE ownerId = ?', [req.params.ownerId]);
         res.json(rows);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.put('/devices/:guid', async (req, res) => {
+    const { deviceName, side } = req.body;
+    try {
+        await db.execute(
+            'UPDATE devices SET deviceName = ?, side = ? WHERE guid = ?',
+            [deviceName, side, req.params.guid]
+        );
+        res.json({ message: 'Пристрій оновлено' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/devices/:guid', async (req, res) => {
+    try {
+        await db.execute('DELETE FROM devices WHERE guid = ?', [req.params.guid]);
+        res.json({ message: 'Пристрій видалено' });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
