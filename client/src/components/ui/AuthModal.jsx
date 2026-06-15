@@ -3,6 +3,7 @@ import { authService } from '../../Services/AuthService';
 import { GoogleLogin } from '@react-oauth/google';
 
 export const AuthModal = ({ onLogin }) => {
+  // Можливі режими: 'login', 'register', 'verify-reg', 'forgot', 'reset'
   const [mode, setMode] = useState('login');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
@@ -56,6 +57,9 @@ export const AuthModal = ({ onLogin }) => {
         setError('Паролі не збігаються');
         return false;
       }
+    } else if (mode === 'verify-reg' && formData.code.length < 6) {
+      setError('Введіть 6-значний код з пошти');
+      return false;
     } else if (mode === 'login' && formData.password.length === 0) {
       setError('Введіть пароль');
       return false;
@@ -79,13 +83,23 @@ export const AuthModal = ({ onLogin }) => {
       if (mode === 'login') {
         const user = await authService.login(formData.email, formData.password);
         onLogin(user);
+
       } else if (mode === 'register') {
-        const user = await authService.register(formData.name, formData.email, formData.password);
+        // 1. Відправляємо запит на реєстрацію (сервер шле код)
+        const res = await authService.register(formData.name, formData.email, formData.password);
+        setSuccessMsg(res.message);
+        setMode('verify-reg'); // Перемикаємо на форму введення коду
+
+      } else if (mode === 'verify-reg') {
+        // 2. Відправляємо код для підтвердження
+        const user = await authService.verifyRegistration(formData.email, formData.code);
         onLogin(user);
+
       } else if (mode === 'forgot') {
         const res = await authService.forgotPassword(formData.email);
         setSuccessMsg(res.message);
         setMode('reset');
+
       } else if (mode === 'reset') {
         const res = await authService.resetPassword(formData.email, formData.code, formData.password);
         setSuccessMsg(res.message);
@@ -102,17 +116,24 @@ export const AuthModal = ({ onLogin }) => {
     }
   };
 
+  const getTitle = () => {
+    switch(mode) {
+      case 'login': return 'Вхід у систему';
+      case 'register': return 'Реєстрація';
+      case 'verify-reg': return 'Підтвердження пошти';
+      case 'forgot': return 'Відновлення пароля';
+      case 'reset': return 'Новий пароль';
+      default: return '';
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm transition-opacity duration-300">
       <div className="w-full max-w-md bg-white dark:bg-gray-800 rounded-2xl shadow-2xl overflow-hidden transform transition-all duration-300 scale-100">
         
         <div className="bg-blue-600 dark:bg-blue-800 p-6 text-center transition-colors duration-300">
-          <h2 className="text-2xl font-bold text-white">
-            {mode === 'login' ? 'Вхід у систему' : mode === 'register' ? 'Реєстрація' : mode === 'forgot' ? 'Відновлення пароля' : 'Новий пароль'}
-          </h2>
-          <p className="text-blue-100 dark:text-blue-200 text-sm mt-2">
-            Керування розумним вікном
-          </p>
+          <h2 className="text-2xl font-bold text-white">{getTitle()}</h2>
+          <p className="text-blue-100 dark:text-blue-200 text-sm mt-2">Керування розумним вікном</p>
         </div>
 
         <div className="p-8">
@@ -143,18 +164,18 @@ export const AuthModal = ({ onLogin }) => {
                 type="email"
                 required
                 value={formData.email}
-                disabled={mode === 'reset'}
+                disabled={mode === 'reset' || mode === 'verify-reg'}
                 placeholder="admin@smart.home"
                 className={`w-full px-4 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-white border rounded-lg outline-none transition-all ${
                   error && !emailRegex.test(formData.email) && formData.email.length > 0 
                     ? 'border-red-500 focus:ring-red-200' 
                     : 'border-gray-300 dark:border-gray-600 focus:ring-blue-500'
-                } ${mode === 'reset' ? 'opacity-60 cursor-not-allowed' : ''}`}
+                } ${mode === 'reset' || mode === 'verify-reg' ? 'opacity-60 cursor-not-allowed' : ''}`}
                 onChange={handleChange}
               />
             </div>
 
-            {mode === 'reset' && (
+            {(mode === 'reset' || mode === 'verify-reg') && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                   Код з пошти
@@ -172,7 +193,7 @@ export const AuthModal = ({ onLogin }) => {
               </div>
             )}
 
-            {mode !== 'forgot' && (
+            {(mode === 'login' || mode === 'register' || mode === 'reset') && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                   {mode === 'reset' ? 'Новий пароль' : 'Пароль'}
@@ -223,7 +244,13 @@ export const AuthModal = ({ onLogin }) => {
               disabled={isLoading}
               className="w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg shadow-lg transform transition hover:-translate-y-0.5 disabled:opacity-70 flex justify-center items-center"
             >
-              {isLoading ? 'Завантаження...' : (mode === 'login' ? 'Увійти' : mode === 'register' ? 'Зареєструватися' : mode === 'forgot' ? 'Отримати код' : 'Зберегти пароль')}
+              {isLoading ? 'Завантаження...' : 
+                mode === 'login' ? 'Увійти' : 
+                mode === 'register' ? 'Зареєструватися' : 
+                mode === 'verify-reg' ? 'Підтвердити пошту' :
+                mode === 'forgot' ? 'Отримати код' : 
+                'Зберегти пароль'
+              }
             </button>
           </form>
 
@@ -239,7 +266,7 @@ export const AuthModal = ({ onLogin }) => {
             </div>
           )}
 
-          {mode !== 'forgot' && mode !== 'reset' && (
+          {(mode === 'login' || mode === 'register') && (
             <div className="mt-6">
               <div className="relative flex items-center justify-center mb-6">
                 <div className="flex-grow border-t border-gray-300 dark:border-gray-600"></div>
@@ -260,7 +287,7 @@ export const AuthModal = ({ onLogin }) => {
             </div>
           )}
 
-          {mode !== 'reset' && (
+          {(mode === 'login' || mode === 'register') && (
             <div className="mt-6 text-center text-sm text-gray-600 dark:text-gray-400">
               {mode === 'login' ? 'Немає акаунту?' : 'Вже є акаунт?'}
               <button

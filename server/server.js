@@ -30,8 +30,11 @@ const transporter = nodemailer.createTransport({
     }
 });
 
+// Тимчасове сховище для кодів
 const resetCodes = new Map();
+const pendingRegistrations = new Map();
 
+// КРОК 1 РЕЄСТРАЦІЇ: Відправка коду
 app.post('/register', async (req, res) => {
     const { name, email, password } = req.body;
 
@@ -40,27 +43,68 @@ app.post('/register', async (req, res) => {
     }
 
     try {
-        const [existing] = await db.execute('SELECT id FROM users WHERE email = ? OR name = ?', [email, name]);
+        const [existing] = await db.execute('SELECT id FROM users WHERE email = ?', [email]);
         if (existing.length > 0) {
-            return res.status(400).json({ message: 'Користувач з таким email або ім\'ям вже існує' });
+            return res.status(400).json({ message: 'Користувач з таким email вже існує' });
         }
 
-        const hashedPassword = await bcrypt.hash(password, 10);
+        const code = Math.floor(100000 + Math.random() * 900000).toString();
+        // Зберігаємо дані в пам'ять на 15 хвилин
+        pendingRegistrations.set(email, { name, email, password, code, expires: Date.now() + 15 * 60 * 1000 });
+
+        const mailOptions = {
+            from: process.env.EMAIL_USER,
+            to: email,
+            subject: 'Підтвердження реєстрації SmartWindow',
+            text: `Ваш код для підтвердження пошти: ${code}\nКод дійсний 15 хвилин.`
+        };
+
+        await transporter.sendMail(mailOptions);
+        res.status(200).json({ message: 'Код підтвердження відправлено на вашу пошту' });
+    } catch (err) {
+        console.error("ПОМИЛКА РЕЄСТРАЦІЇ:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// КРОК 2 РЕЄСТРАЦІЇ: Перевірка коду та збереження в БД
+app.post('/verify-registration', async (req, res) => {
+    const { email, code } = req.body;
+    const record = pendingRegistrations.get(email);
+
+    if (!record) {
+        return res.status(400).json({ message: 'Код не запитувався або термін дії минув' });
+    }
+    if (record.code !== code) {
+        return res.status(400).json({ message: 'Невірний код' });
+    }
+    if (Date.now() > record.expires) {
+        pendingRegistrations.delete(email);
+        return res.status(400).json({ message: 'Термін дії коду минув. Пройдіть реєстрацію заново.' });
+    }
+
+    try {
+        const hashedPassword = await bcrypt.hash(record.password, 10);
         
-        await db.execute(
+        const [result] = await db.execute(
             'INSERT INTO users (name, email, password) VALUES (?, ?, ?)',
-            [name, email, hashedPassword]
+            [record.name, record.email, hashedPassword]
         );
 
-        res.status(201).json({ message: 'Користувача створено' , user:{name, email, hashedPassword}});
+        pendingRegistrations.delete(email); // Видаляємо з тимчасової пам'яті
+        
+        res.status(201).json({ 
+            message: 'Реєстрація успішна', 
+            user: { id: result.insertId, name: record.name, email: record.email } 
+        });
     } catch (err) {
+        console.error("ПОМИЛКА ПІДТВЕРДЖЕННЯ РЕЄСТРАЦІЇ:", err);
         res.status(500).json({ error: err.message });
     }
 });
 
 app.post('/login', async (req, res) => {
     const { email, password } = req.body;
-
     try {
         const [rows] = await db.execute('SELECT * FROM users WHERE email = ?', [email]);
         const user = rows[0];
@@ -68,11 +112,7 @@ app.post('/login', async (req, res) => {
         if (!user || !(await bcrypt.compare(password, user.password))) {
             return res.status(400).json({ message: 'Невірний email або пароль' });
         }
-
-        res.json({ 
-            message: 'Вхід успішний', 
-            user: { id: user.id, name: user.name, email: user.email } 
-        });
+        res.json({ message: 'Вхід успішний', user: { id: user.id, name: user.name, email: user.email } });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -80,7 +120,6 @@ app.post('/login', async (req, res) => {
 
 app.post('/google-login', async (req, res) => {
     const { token } = req.body;
-
     try {
         const ticket = await client.verifyIdToken({
             idToken: token,
@@ -90,8 +129,7 @@ app.post('/google-login', async (req, res) => {
                 'ТВОЙ_IOS_CLIENT_ID.apps.googleusercontent.com'                             
             ], 
         });
-        const { name, email, picture } = ticket.getPayload();
-
+        const { name, email } = ticket.getPayload();
         const [rows] = await db.execute('SELECT * FROM users WHERE email = ?', [email]);
         let user = rows[0];
 
@@ -102,7 +140,6 @@ app.post('/google-login', async (req, res) => {
             );
             user = { id: result.insertId, name, email };
         }
-
         res.json({ message: 'Вхід через Google успішний', user });
     } catch (error) {
         res.status(400).json({ message: 'Невалідний Google токен' });
@@ -111,12 +148,9 @@ app.post('/google-login', async (req, res) => {
 
 app.post('/forgot-password', async (req, res) => {
     const { email } = req.body;
-
     try {
         const [rows] = await db.execute('SELECT * FROM users WHERE email = ?', [email]);
-        if (rows.length === 0) {
-            return res.status(404).json({ message: 'Користувача з таким email не знайдено' });
-        }
+        if (rows.length === 0) return res.status(404).json({ message: 'Користувача з таким email не знайдено' });
 
         const code = Math.floor(100000 + Math.random() * 900000).toString();
         resetCodes.set(email, { code, expires: Date.now() + 15 * 60 * 1000 });
@@ -131,21 +165,17 @@ app.post('/forgot-password', async (req, res) => {
         await transporter.sendMail(mailOptions);
         res.json({ message: 'Код підтвердження відправлено на вашу пошту' });
     } catch (err) {
+        console.error("ПОМИЛКА ВІДПРАВКИ ЛИСТА:", err);
         res.status(500).json({ error: err.message });
     }
 });
 
 app.post('/reset-password', async (req, res) => {
     const { email, code, newPassword } = req.body;
-    
     const record = resetCodes.get(email);
     
-    if (!record) {
-        return res.status(400).json({ message: 'Код не запитувався або термін дії минув' });
-    }
-    if (record.code !== code) {
-        return res.status(400).json({ message: 'Невірний код' });
-    }
+    if (!record) return res.status(400).json({ message: 'Код не запитувався або термін дії минув' });
+    if (record.code !== code) return res.status(400).json({ message: 'Невірний код' });
     if (Date.now() > record.expires) {
         resetCodes.delete(email);
         return res.status(400).json({ message: 'Термін дії коду минув' });
@@ -155,30 +185,26 @@ app.post('/reset-password', async (req, res) => {
         const hashedPassword = await bcrypt.hash(newPassword, 10);
         await db.execute('UPDATE users SET password = ? WHERE email = ?', [hashedPassword, email]);
         resetCodes.delete(email);
-        
         res.json({ message: 'Пароль успішно змінено' });
     } catch (err) {
+        console.error("ПОМИЛКА ЗМІНИ ПАРОЛЯ:", err);
         res.status(500).json({ error: err.message });
     }
 });
 
+// Маршрути для пристроїв
 app.post('/add-device', async (req, res) => {
     const { guid, ownerId, deviceName, side, ...otherData } = req.body;
-    if (!guid || !ownerId) {
-        return res.status(400).json({ message: 'Поля GUID та ownerId обов\'язкові' });
-    }
+    if (!guid || !ownerId) return res.status(400).json({ message: 'Поля GUID та ownerId обов\'язкові' });
 
     try {
         await db.execute(
             'INSERT INTO devices (guid, ownerId, deviceName, side, metadata) VALUES (?, ?, ?, ?, ?)',
             [guid, ownerId, deviceName || 'Unknown Device', side, JSON.stringify(otherData)]
         );
-
         res.status(201).json({ message: 'Пристрій збережено' });
     } catch (err) {
-        if (err.code === 'ER_DUP_ENTRY') {
-            return res.status(400).json({ message: 'Пристрій з таким GUID вже існує' });
-        }
+        if (err.code === 'ER_DUP_ENTRY') return res.status(400).json({ message: 'Пристрій з таким GUID вже існує' });
         res.status(500).json({ error: err.message });
     }
 });

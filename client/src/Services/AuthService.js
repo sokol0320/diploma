@@ -4,35 +4,33 @@ export const authService = {
   login: async (email, password) => {
     const response = await fetch(`${API_URL}/login`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password }),
     });
-
     const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(data.message || 'Помилка входу');
-    }
-
+    if (!response.ok) throw new Error(data.message || 'Помилка входу');
     return data.user;
   },
 
   register: async (name, email, password) => {
     const response = await fetch(`${API_URL}/register`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, email, password }),
     });
-
     const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.message || 'Помилка реєстрації');
-    }
+    if (!response.ok) throw new Error(data.message || 'Помилка реєстрації');
+    return data; // Повертає тільки повідомлення
+  },
 
+  verifyRegistration: async (email, code) => {
+    const response = await fetch(`${API_URL}/verify-registration`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, code }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.message || 'Помилка підтвердження реєстрації');
     return data.user;
   },
 
@@ -42,44 +40,30 @@ export const authService = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token: credential }),
     });
-
     const data = await response.json();
     if (!response.ok) throw new Error(data.message || 'Помилка Google аутентифікації');
-
     return data.user;
   },
 
   forgotPassword: async (email) => {
     const response = await fetch(`${API_URL}/forgot-password`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email }),
     });
-
     const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.message || 'Помилка відправки коду');
-    }
-
+    if (!response.ok) throw new Error(data.message || 'Помилка відправки коду');
     return data;
   },
 
   resetPassword: async (email, code, newPassword) => {
     const response = await fetch(`${API_URL}/reset-password`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, code, newPassword }),
     });
-
     const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.message || 'Помилка відновлення пароля');
-    }
-
+    if (!response.ok) throw new Error(data.message || 'Помилка відновлення пароля');
     return data;
   }
 };
