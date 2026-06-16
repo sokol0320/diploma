@@ -165,7 +165,7 @@ export const AuthModal = ({ onLogin }) => {
                 required
                 value={formData.email}
                 disabled={mode === 'reset' || mode === 'verify-reg'}
-                placeholder="admin@smart.home"
+                placeholder="example@smart.home"
                 className={`w-full px-4 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-white border rounded-lg outline-none transition-all ${
                   error && !emailRegex.test(formData.email) && formData.email.length > 0 
                     ? 'border-red-500 focus:ring-red-200' 
