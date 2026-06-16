@@ -239,6 +239,46 @@ app.delete('/devices/:guid', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
+app.get('/rules/:guid', async (req, res) => {
+    try {
+        const [rows] = await db.execute('SELECT * FROM device_rules WHERE guid = ?', [req.params.guid]);
+        res.json(rows);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/rules', async (req, res) => {
+    const { guid, start_time, end_time, days, mode } = req.body;
+    try {
+        const [result] = await db.execute(
+            'INSERT INTO device_rules (guid, start_time, end_time, days, mode) VALUES (?, ?, ?, ?, ?)',
+            [guid, start_time, end_time, JSON.stringify(days), mode]
+        );
+        res.status(201).json({ id: result.insertId });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/rules/:id', async (req, res) => {
+    try {
+        await db.execute('DELETE FROM device_rules WHERE id = ?', [req.params.id]);
+        res.json({ message: 'Deleted' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.put('/rules/:id/toggle', async (req, res) => {
+    const { is_active } = req.body;
+    try {
+        await db.execute('UPDATE device_rules SET is_active = ? WHERE id = ?', [is_active, req.params.id]);
+        res.json({ message: 'Toggled' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
