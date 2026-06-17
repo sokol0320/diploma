@@ -1,5 +1,7 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { DeviceSettingsModal, DeviceDetailsModal } from './ui';
+
+const API_BASE = 'http://localhost:3306/device-command';
 
 const SmartWindow = ({device, onDeviceUpdate, ...props}) => {
   const [windowState, setWindowState] = useState('closed'); 
@@ -8,15 +10,7 @@ const SmartWindow = ({device, onDeviceUpdate, ...props}) => {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
   
-  // Референс для зберігання об'єкта WebSocket
-  const wsRef = useRef(null);
-  
-  const [side, setSide] = useState(() => {
-    if (device?.side?.data && Array.isArray(device.side.data)) {
-      return device.side.data[0];
-    }
-    return device?.side ?? 1; 
-  });
+  const [side, setSide] = useState(1);
   
   const [netStatus, setNetStatus] = useState({ 
     online: false, 
@@ -24,98 +18,100 @@ const SmartWindow = ({device, onDeviceUpdate, ...props}) => {
     lastCode: null 
   });
 
-  // Підключення до WebSocket за допомогою GUID
+  // Синхронізуємо сторону відкриття ВИКЛЮЧНО з базою даних (через prop device)
   useEffect(() => {
-    // Чекаємо, поки пристрій завантажиться і ми отримаємо його GUID
-    if (!device?.guid) return;
+    if (device?.side?.data && Array.isArray(device.side.data)) {
+      setSide(device.side.data[0]);
+    } else if (device?.side !== undefined) {
+      setSide(device.side);
+    }
+  }, [device?.side]);
 
-    let ws;
-    let reconnectTimeout;
-
-    const connectWebSocket = () => {
-      // Формуємо URL з GUID замість порту
-      const wsUrl = `ws://193.33.207.39/${device.guid}`;
-      ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        setNetStatus(prev => ({ ...prev, online: true }));
-        setError(null);
-        
-        // Запитуємо поточний статус при підключенні
-        ws.send(JSON.stringify({ go: 'status', guid: device.guid }));
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          
-          if (data.status) {
-            const info = data.status;
-            const statusMap = { 100: 'busy', 200: 'open', 300: 'ventilation', 400: 'closed' };
-            const current = statusMap[info];
-
-            if (current === 'busy') {
-              setIsMotorBusy(true);
-            } else {
-              setIsMotorBusy(false);
-              if (current) setWindowState(current);
-            }
-            setNetStatus(prev => ({ ...prev, lastCode: info, latency: '<10' })); 
-          }
-        } catch (err) {
-          console.error("Не вдалося розпарсити дані від сокета:", event.data);
-        }
-      };
-
-      ws.onclose = () => {
-        setNetStatus(prev => ({ ...prev, online: false }));
-        setIsMotorBusy(false);
-        setError('Зв’язок втрачено. Підключення...');
-        
-        // Автоматичне перепідключення через 3 секунди
-        reconnectTimeout = setTimeout(connectWebSocket, 3000);
-      };
-
-      ws.onerror = (err) => {
-        console.error('Помилка WebSocket:', err);
-        ws.close(); // Це викличе onclose і запустить перепідключення
-      };
-    };
-
-    connectWebSocket();
-
-    // Очищення при закритті компонента
-    return () => {
-      if (reconnectTimeout) clearTimeout(reconnectTimeout);
-      if (ws) {
-        ws.onclose = null; // Запобігаємо перепідключенню після виходу
-        ws.close();
+const refreshStatus = useCallback(async () => {
+    const currentGuid = device?.guid || 'UNKNOWN_GUID'; 
+    const startTime = Date.now();
+    try {
+      const response = await fetch(API_BASE, {
+         method: 'POST',
+         headers: { 'Content-Type': 'application/json' },
+         body: JSON.stringify({ go: 'status', guid: currentGuid })
+      });
+      
+      const data = await response.json();
+      
+      // ДОДАНО: Перевірка на 403 (Плата відключена від PHP-сервера)
+      if (!response.ok || data.error || data.status === undefined || data.status === 403) {
+          throw new Error(data.error || 'Пристрій офлайн');
       }
-    };
-  }, [device?.guid]); // Ефект перезапуститься, якщо зміниться GUID
 
-  // ВІДПРАВКА КОМАНД ЧЕРЕЗ СОКЕТ
-  const handleAction = (action) => {
-    if (isMotorBusy || !netStatus.online || !wsRef.current) return;
-    const currentGuid = device?.guid;
+      const endTime = Date.now();
+      setNetStatus({ online: true, latency: endTime - startTime, lastCode: data.status });
+
+      let isMoving = false;
+      let actualStatus = data.status;
+
+      if (typeof data.message === 'string' && data.message.includes('{')) {
+          try {
+              const innerJson = JSON.parse(data.message);
+              if (innerJson.message === "Moving") isMoving = true;
+              if (innerJson.status) actualStatus = innerJson.status;
+          } catch (e) {
+              if (data.message.includes("Moving")) isMoving = true;
+          }
+      } else if (data.message === "Moving") {
+          isMoving = true;
+      }
+
+      if (isMoving) {
+        setIsMotorBusy(true); 
+      } else {
+        setIsMotorBusy(false);
+        const statusMap = { 200: 'open', 300: 'ventilation', 400: 'closed', 700: 'orientation changed(left)', 800: 'orientation changed(right)' };
+        
+        if (statusMap[actualStatus]) {
+          setWindowState(statusMap[actualStatus]);
+        }
+      }
+      setError(null);
+
+    } catch (err) {
+      // Ставимо ОФЛАЙН
+      setNetStatus(prev => ({ ...prev, online: false, latency: null }));
+      setError('Зв’язок втрачено (Пристрій офлайн)');
+    }
+  }, [device?.guid]);
+  useEffect(() => {
+    refreshStatus();
+    const interval = setInterval(refreshStatus, 2000);
+    return () => clearInterval(interval);
+  }, [refreshStatus]);
+
+  const handleAction = async (action) => {
+    if (isMotorBusy || !netStatus.online) return;
+    const currentGuid = device?.guid || 'UNKNOWN_GUID';
     const commandMap = { 'open': 'open', 'closed': 'close', 'ventilation': 'tilt' };
     
     setError(null);
-    setIsMotorBusy(true);
+    setIsMotorBusy(true); 
     
-    if (wsRef.current.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({
-            go: commandMap[action],
-            guid: currentGuid
-        }));
-    } else {
-        setError('Помилка: сокет не готовий');
-        setIsMotorBusy(false);
+    try {
+       const response = await fetch(API_BASE, {
+         method: 'POST',
+         headers: { 'Content-Type': 'application/json' },
+         body: JSON.stringify({ go: commandMap[action], guid: currentGuid })
+       });
+       
+       const data = await response.json();
+       
+       if (!response.ok || data.error) {
+           throw new Error(data.error || 'Помилка');
+       }
+    } catch (err) {
+      setError('Помилка виконання команди');
+      setIsMotorBusy(false);
     }
   };
 
-  // ЛОГІКА АВТОМАТИЧНОГО ВИКОНАННЯ ЗА РОЗКЛАДОМ
   const checkSchedule = useCallback(async () => {
     if (!device?.guid || !netStatus.online || isMotorBusy) return;
     try {
@@ -160,7 +156,6 @@ const SmartWindow = ({device, onDeviceUpdate, ...props}) => {
     }
   }, [device?.guid, netStatus.online, isMotorBusy, windowState]); 
 
-  // Перевіряємо розклад кожні 30 секунд
   useEffect(() => {
     const scheduleInterval = setInterval(checkSchedule, 30000); 
     return () => clearInterval(scheduleInterval);
@@ -173,12 +168,14 @@ const SmartWindow = ({device, onDeviceUpdate, ...props}) => {
       switch (windowState) {
         case 'open': return `${baseStyles} origin-left [transform:rotateY(-45deg)]`;
         case 'ventilation': return `${baseStyles} origin-bottom [transform:rotateX(-15deg)]`; 
+        case 'orientation changed(left)': return `${baseStyles} origin-left [transform:rotateY(0)_rotateX(0)]`;
         default: return `${baseStyles} origin-left [transform:rotateY(0)_rotateX(0)]`;
       }
     } else {
       switch (windowState) {
         case 'open': return `${baseStyles} origin-right [transform:rotateY(45deg)]`;
         case 'ventilation': return `${baseStyles} origin-bottom [transform:rotateX(-15deg)]`; 
+        case 'orientation changed(right)': return `${baseStyles} origin-right [transform:rotateY(0)_rotateX(0)]`;
         default: return `${baseStyles} origin-right [transform:rotateY(0)_rotateX(0)]`;
       }
     }
@@ -212,7 +209,7 @@ const SmartWindow = ({device, onDeviceUpdate, ...props}) => {
 
       <div className="mb-6 w-full max-w-[300px] bg-gray-50 dark:bg-gray-900 p-3 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 text-[11px] transition-colors duration-300">
         <div className="flex justify-between items-center mb-2">
-          <span className="font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Network Status (WS)</span>
+          <span className="font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Network Status</span>
           <div className="flex items-center gap-1.5">
             <div className={`w-2 h-2 rounded-full ${netStatus.online ? 'bg-green-500' : 'bg-red-500 animate-pulse'}`}></div>
             <span className={`font-black ${netStatus.online ? 'text-green-600 dark:text-green-500' : 'text-red-600 dark:text-red-500'}`}>
@@ -279,8 +276,8 @@ const SmartWindow = ({device, onDeviceUpdate, ...props}) => {
         </div>
       )}
 
-      <div className="mt-6 text-[10px] text-gray-400 dark:text-gray-500 font-mono italic transition-colors duration-300 text-center">
-        WS: 193.33.207.39/{device?.guid}
+      <div className="mt-6 text-[10px] text-gray-400 dark:text-gray-500 font-mono italic transition-colors duration-300">
+        IP: 193.33.207.39 | GUID: <span className="text-gray-500 dark:text-gray-400">{device?.guid}</span>
       </div>
 
       <DeviceSettingsModal 

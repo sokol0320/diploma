@@ -37,6 +37,21 @@ export const DeviceSettingsModal = ({ isOpen, onClose, device, onUpdate }) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ deviceName, side })
       });
+      if(side == 1){
+        await fetch('http://localhost:3306/device-command', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({guid: device.guid, "go": 'SET_LEFT'})
+        })
+      }
+      if(side == 0){
+        await fetch('http://localhost:3306/device-command', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({guid: device.guid, "go": 'SET_RIGHT'})
+        })
+      }
+        
       onUpdate();
       onClose();
     } catch (error) {

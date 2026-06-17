@@ -5,6 +5,7 @@ const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const nodemailer = require('nodemailer');
 const { OAuth2Client } = require('google-auth-library');
+const { json } = require('body-parser');
 
 const client = new OAuth2Client('876673268691-scqmciamd7gcmec4jrg2v0hv2a0hkerj.apps.googleusercontent.com');
 const app = express();
@@ -277,6 +278,49 @@ app.put('/rules/:id/toggle', async (req, res) => {
         res.json({ message: 'Toggled' });
     } catch (err) {
         res.status(500).json({ error: err.message });
+    }
+});
+// --- ПРОКСІ ДЛЯ КЕРУВАННЯ ПРИСТРОЄМ (ОБХІД CORS) ---
+app.post('/device-command', async (req, res) => {
+    const body = req.body || {};
+    const go = body.go;
+    const guid = body.guid;
+    
+    if (!go || !guid) {
+        return res.status(400).json({ error: "Відсутні параметри 'go' або 'guid'" });
+    }
+
+    try {
+        const controller = new AbortController();
+        // Таймаут 8 секунд
+        const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+        // ВІДПРАВЛЯЄМО ЧИСТИЙ JSON НА set.php
+        const response = await fetch('http://193.33.207.39/set.php', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ go, guid }),
+            signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
+        const textData = await response.text();
+        
+        try {
+            // Пробуємо розпарсити відповідь як JSON
+            const cleanText = textData.trim();
+            const jsonData = JSON.parse(cleanText);
+            res.json(jsonData);
+        } catch (parseErr) {
+            // Якщо це не JSON (наприклад, текст помилки від PHP)
+            if (!response.ok) {
+                return res.status(500).json({ error: "Помилка PHP: " + response.status });
+            }
+            res.json({ status: textData.trim() });
+        }
+    } catch (err) {
+        console.error("Помилка зв'язку з пристроєм:", err.message);
+        res.status(500).json({ error: "Пристрій офлайн або недоступний" });
     }
 });
 
