@@ -27,7 +27,7 @@ const SmartWindow = ({device, onDeviceUpdate, ...props}) => {
     }
   }, [device?.side]);
 
-const refreshStatus = useCallback(async () => {
+  const refreshStatus = useCallback(async () => {
     const currentGuid = device?.guid || 'UNKNOWN_GUID'; 
     const startTime = Date.now();
     try {
@@ -39,7 +39,7 @@ const refreshStatus = useCallback(async () => {
       
       const data = await response.json();
       
-      // ДОДАНО: Перевірка на 403 (Плата відключена від PHP-сервера)
+      // Перевірка на 403 (Плата відключена від PHP-сервера)
       if (!response.ok || data.error || data.status === undefined || data.status === 403) {
           throw new Error(data.error || 'Пристрій офлайн');
       }
@@ -66,7 +66,13 @@ const refreshStatus = useCallback(async () => {
         setIsMotorBusy(true); 
       } else {
         setIsMotorBusy(false);
-        const statusMap = { 200: 'open', 300: 'ventilation', 400: 'closed', 700: 'orientation changed(left)', 800: 'orientation changed(right)' };
+        const statusMap = { 
+            200: 'open', 
+            300: 'ventilation', 
+            400: 'closed', 
+            700: 'orientation changed(left)', 
+            800: 'orientation changed(right)' 
+        };
         
         if (statusMap[actualStatus]) {
           setWindowState(statusMap[actualStatus]);
@@ -80,6 +86,7 @@ const refreshStatus = useCallback(async () => {
       setError('Зв’язок втрачено (Пристрій офлайн)');
     }
   }, [device?.guid]);
+
   useEffect(() => {
     refreshStatus();
     const interval = setInterval(refreshStatus, 2000);
@@ -111,56 +118,6 @@ const refreshStatus = useCallback(async () => {
       setIsMotorBusy(false);
     }
   };
-
-  const checkSchedule = useCallback(async () => {
-    if (!device?.guid || !netStatus.online || isMotorBusy) return;
-    try {
-        const res = await fetch(`http://localhost:3306/rules/${device.guid}`);
-        if (!res.ok) return;
-        const data = await res.json();
-        
-        const now = new Date();
-        const daysMap = ['Нд', 'Пн', 'Вв', 'Ср', 'Чт', 'Пт', 'Сб'];
-        const currentDay = daysMap[now.getDay()];
-        const currentTime = now.toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit' });
-
-        const activeRule = data.find(r => {
-            if (!r.is_active) return false;
-            let parsedDays = [];
-            try { parsedDays = typeof r.days === 'string' ? JSON.parse(r.days) : r.days; } catch(e){}
-            
-            if (!parsedDays.includes(currentDay)) return false;
-            
-            if (r.start_time <= r.end_time) {
-                return currentTime >= r.start_time && currentTime <= r.end_time;
-            } else {
-                return currentTime >= r.start_time || currentTime <= r.end_time;
-            }
-        });
-
-        if (activeRule) {
-            const modeMap = {
-                'Відкрито': 'open',
-                'Закрито': 'closed',
-                'Провітрювання': 'ventilation'
-            };
-            const targetState = modeMap[activeRule.mode];
-            
-            if (windowState !== targetState) {
-                console.log(`[АВТОМАТИКА] Зміна режиму на: ${activeRule.mode}`);
-                handleAction(targetState); 
-            }
-        }
-    } catch (e) {
-        console.error("Помилка перевірки розкладу:", e);
-    }
-  }, [device?.guid, netStatus.online, isMotorBusy, windowState]); 
-
-  useEffect(() => {
-    const scheduleInterval = setInterval(checkSchedule, 30000); 
-    return () => clearInterval(scheduleInterval);
-  }, [checkSchedule]);
-
 
   const getSashStyles = () => {
     const baseStyles = "relative w-full h-full bg-white/90 dark:bg-gray-800/90 border-[12px] border-white dark:border-gray-700 transition-all duration-1000 ease-[cubic-bezier(0.25,0.46,0.45,0.94)] shadow-lg [transform-style:preserve-3d]";

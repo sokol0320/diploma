@@ -323,6 +323,87 @@ app.post('/device-command', async (req, res) => {
         res.status(500).json({ error: "Пристрій офлайн або недоступний" });
     }
 });
+// --- АВТОМАТИЧНЕ ВИКОНАННЯ КОМАНД ЗА РОЗКЛАДОМ (ФОНОВИЙ ПРОЦЕС) ---
+const statusMap = { 200: 'open', 300: 'ventilation', 400: 'closed' };
+const modeMap = { 'Відкрито': 'open', 'Закрито': 'closed', 'Провітрювання': 'ventilation' };
+const commandMap = { 'open': 'open', 'closed': 'close', 'ventilation': 'tilt' };
 
+setInterval(async () => {
+    try {
+        // 1. Отримуємо поточний час та день тижня суворо за Київським часом
+        const kyivTimeStr = new Date().toLocaleString("en-US", { timeZone: "Europe/Kyiv" });
+        const kyivDate = new Date(kyivTimeStr);
+        
+        const daysMap = ['Нд', 'Пн', 'Вв', 'Ср', 'Чт', 'Пт', 'Сб'];
+        const currentDay = daysMap[kyivDate.getDay()];
+        const currentTime = kyivDate.toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit', hour12: false });
+
+        // 2. Вибираємо з БД всі активні правила
+        const [rules] = await db.execute('SELECT * FROM device_rules WHERE is_active = true');
+        if (rules.length === 0) return;
+
+        // Групуємо правила за GUID, щоб визначити цільовий стан для кожного вікна
+        const targetsByGuid = {};
+
+        rules.forEach(rule => {
+            let parsedDays = [];
+            try {
+                parsedDays = typeof rule.days === 'string' ? JSON.parse(rule.days) : rule.days;
+            } catch (e) {
+                return;
+            }
+
+            // Перевіряємо, чи підходить день тижня
+            if (parsedDays.includes(currentDay)) {
+                let isCurrent = false;
+                // Логіка для звичайних та нічних інтервалів (наприклад, 22:00 - 06:00)
+                if (rule.start_time <= rule.end_time) {
+                    isCurrent = currentTime >= rule.start_time && currentTime <= rule.end_time;
+                } else {
+                    isCurrent = currentTime >= rule.start_time || currentTime <= rule.end_time;
+                }
+
+                if (isCurrent) {
+                    // Якщо для цього GUID вже є правило, пріоритет можна віддати новішому
+                    targetsByGuid[rule.guid] = modeMap[rule.mode];
+                }
+            }
+        });
+
+        // 3. Перевіряємо поточний стан пристроїв та відправляємо команди
+        for (const guid in targetsByGuid) {
+            const targetState = targetsByGuid[guid];
+
+            try {
+                // Запитуємо статус у set.php
+                const resStatus = await fetch('http://193.33.207.39/set.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ go: 'status', guid: guid })
+                });
+
+                if (resStatus.ok) {
+                    const statusData = await resStatus.json();
+                    const currentDeviceState = statusMap[statusData.status];
+
+                    // Відправляємо команду тільки якщо поточний стан НЕ збігається з розкладом
+                    if (currentDeviceState && currentDeviceState !== targetState) {
+                        console.log(`[АВТОМАТИКА СЕРВЕРА] Вікно ${guid} потребує зміни стану на: ${targetState}`);
+                        
+                        await fetch('http://193.33.207.39/set.php', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ go: commandMap[targetState], guid: guid })
+                        });
+                    }
+                }
+            } catch (err) {
+                console.error(`[АВТОМАТИКА СЕРВЕРА] Помилка зв'язку з платою ${guid}:`, err.message);
+            }
+        }
+    } catch (dbErr) {
+        console.error("[АВТОМАТИКА СЕРВЕРА] Помилка роботи з базою даних:", dbErr.message);
+    }
+}, 30000); // Перевірка кожні 30 секунд
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
