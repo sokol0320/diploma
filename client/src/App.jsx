@@ -21,7 +21,7 @@ function App() {
     const ownerId = typeof user === 'object' ? user.id : user;
 
     try {
-      const response = await fetch(`http://localhost:3306/devices/${ownerId}`);
+      const response = await fetch(`https://d2nxohjr4o1avk.cloudfront.net/api/devices/${ownerId}`);
       if (response.ok) {
         const data = await response.json();
         setDevices(data);
@@ -74,7 +74,6 @@ function App() {
           {/* Панель керування справа */}
           <div className="flex items-center gap-4 ml-auto">
             
-            <ThemeToggle />
 
             <div className="text-right hidden sm:block">
               <p className="text-[10px] uppercase tracking-wide text-gray-500 dark:text-gray-400">Користувач</p>

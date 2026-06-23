@@ -1,4 +1,4 @@
-const API_URL = 'http://localhost:3306';
+const API_URL = 'https://d2nxohjr4o1avk.cloudfront.net/api';
 
 export const authService = {
   login: async (email, password) => {

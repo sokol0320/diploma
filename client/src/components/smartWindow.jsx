@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { DeviceSettingsModal, DeviceDetailsModal } from './ui';
 
-const API_BASE = 'http://localhost:3306/device-command';
+const API_BASE = 'https://d2nxohjr4o1avk.cloudfront.net/api/device-command';
 
 const SmartWindow = ({device, onDeviceUpdate, ...props}) => {
   const [windowState, setWindowState] = useState('closed'); 

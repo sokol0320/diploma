@@ -404,6 +404,6 @@ setInterval(async () => {
     } catch (dbErr) {
         console.error("[АВТОМАТИКА СЕРВЕРА] Помилка роботи з базою даних:", dbErr.message);
     }
-}, 30000); // Перевірка кожні 30 секунд
+}, 1000); // Перевірка кожні 30 секунд
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

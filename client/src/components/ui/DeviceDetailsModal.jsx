@@ -20,7 +20,7 @@ export const DeviceDetailsModal = ({ isOpen, onClose, device }) => {
     mode: 'Провітрювання'
   });
 
-  const allDays = ['Пн', 'Вв', 'Ср', 'Чт', 'Пт', 'Сб', 'Нд'];
+  const allDays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Нд'];
 
   // Завантаження погоди
   useEffect(() => {
@@ -50,7 +50,7 @@ export const DeviceDetailsModal = ({ isOpen, onClose, device }) => {
   const fetchRules = useCallback(async () => {
     if (!device?.guid) return;
     try {
-      const res = await fetch(`http://localhost:3306/rules/${device.guid}`);
+      const res = await fetch(`https://d2nxohjr4o1avk.cloudfront.net/api/rules/${device.guid}`);
       const contentType = res.headers.get("content-type");
       if (res.ok && contentType && contentType.indexOf("application/json") !== -1) {
         const data = await res.json();
@@ -70,15 +70,25 @@ export const DeviceDetailsModal = ({ isOpen, onClose, device }) => {
     if (isOpen) fetchRules();
   }, [isOpen, fetchRules]);
 
-  const handleAddRule = async () => {
+const handleAddRule = async () => {
     if (newRule.days.length === 0) return alert("Оберіть хоча б один день тижня!");
     if (!device?.guid) return alert("Помилка: відсутній GUID");
 
+    // Словник для перекладу: Неділя = 0, Понеділок = 1 ... Субота = 6
+    const dayToNumberMap = { 'Нд': 0, 'Пн': 1, 'Вт': 2, 'Ср': 3, 'Чт': 4, 'Пт': 5, 'Сб': 6 };
+    
+    // Перетворюємо масив слів (напр. ["Вт", "Ср"]) на масив чисел (напр. [2, 3])
+    const numericDays = newRule.days.map(day => dayToNumberMap[day]);
+
     try {
-      const res = await fetch(`http://localhost:3306/rules`, {
+      const res = await fetch(`https://d2nxohjr4o1avk.cloudfront.net/api/rules`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ guid: device.guid, ...newRule })
+        body: JSON.stringify({ 
+            guid: device.guid, 
+            ...newRule, 
+            days: numericDays // Відправляємо масив чисел!
+        })
       });
 
       if (res.ok) {
@@ -95,7 +105,7 @@ export const DeviceDetailsModal = ({ isOpen, onClose, device }) => {
 
   const toggleRule = async (id, currentStatus) => {
     try {
-      await fetch(`http://localhost:3306/rules/${id}/toggle`, {
+      await fetch(`https://d2nxohjr4o1avk.cloudfront.net/api/rules/${id}/toggle`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ is_active: !currentStatus })
@@ -106,7 +116,7 @@ export const DeviceDetailsModal = ({ isOpen, onClose, device }) => {
 
   const deleteRule = async (id) => {
     try {
-      await fetch(`http://localhost:3306/rules/${id}`, { method: 'DELETE' });
+      await fetch(`https://d2nxohjr4o1avk.cloudfront.net/api/rules/${id}`, { method: 'DELETE' });
       fetchRules();
     } catch (e) {}
   };

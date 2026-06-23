@@ -32,20 +32,20 @@ export const DeviceSettingsModal = ({ isOpen, onClose, device, onUpdate }) => {
   const handleSave = async () => {
     setIsLoading(true);
     try {
-      await fetch(`http://localhost:3306/devices/${device.guid}`, {
+      await fetch(`https://d2nxohjr4o1avk.cloudfront.net/api/devices/${device.guid}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ deviceName, side })
       });
       if(side == 1){
-        await fetch('http://localhost:3306/device-command', {
+        await fetch('https://d2nxohjr4o1avk.cloudfront.net/api/device-command', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({guid: device.guid, "go": 'SET_LEFT'})
         })
       }
       if(side == 0){
-        await fetch('http://localhost:3306/device-command', {
+        await fetch('https://d2nxohjr4o1avk.cloudfront.net/api/device-command', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({guid: device.guid, "go": 'SET_RIGHT'})
@@ -65,7 +65,7 @@ export const DeviceSettingsModal = ({ isOpen, onClose, device, onUpdate }) => {
     if (!window.confirm('Ви впевнені, що хочете видалити цей пристрій?')) return;
     setIsLoading(true);
     try {
-      await fetch(`http://localhost:3306/devices/${device.guid}`, {
+      await fetch(`https://d2nxohjr4o1avk.cloudfront.net/api/devices/${device.guid}`, {
         method: 'DELETE'
       });
       onUpdate();

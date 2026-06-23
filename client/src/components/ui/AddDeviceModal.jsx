@@ -23,7 +23,7 @@ export const AddDeviceModal = ({ isOpen, onClose, onDeviceAdded, user, Customfet
     }
 
     try {
-        const response = await fetch('http://localhost:3306/add-device', {
+        const response = await fetch('https://d2nxohjr4o1avk.cloudfront.net/api/add-device', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
